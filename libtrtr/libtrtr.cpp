@@ -178,6 +178,27 @@ constexpr float4 lerp(const float4& a, const float4& b, const float4& c)
 static constexpr const float unorm8_to_float = 1.0f / 255.0f;
 static constexpr const float float_to_unorm8 = 255.0f;
 
+constexpr COLOR_UINT_R8G8B8A8 rgbfcvt(const float4& cvt)
+{
+    float4 rq = cvt * float_to_unorm8;
+    COLOR_UINT_R8G8B8A8 result = {};
+    result.rgba[0] = rq.x;
+    result.rgba[1] = rq.y;
+    result.rgba[2] = rq.z;
+    result.rgba[3] = rq.w;
+    return result;
+}
+
+constexpr float4 frgbcvt(COLOR_UINT_R8G8B8A8 color)
+{
+    return {
+        unorm8_to_float * color.rgba[0],
+        unorm8_to_float * color.rgba[1],
+        unorm8_to_float * color.rgba[2],
+        unorm8_to_float * color.rgba[3]
+    };
+}
+
 struct RESOURCE_REGISTER
 {
     void*   memory;
@@ -235,19 +256,9 @@ float2x2 inverse(const float2x2& mat)
     return result;
 }
 
-constexpr COLOR_UINT_R8G8B8A8 rgbfcvt(const float4& cvt)
-{
-    float4 rq = cvt * float_to_unorm8;
-    COLOR_UINT_R8G8B8A8 result = {};
-    result.rgba[0] = rq.x;
-    result.rgba[1] = rq.y;
-    result.rgba[2] = rq.z;
-    result.rgba[3] = rq.w;
-    return result;
-}
 
-template<typename PS>
-struct draw : public PS
+
+struct draw 
 {
     static constexpr bool edge(float xa, float ya,
         float xb, float yb,
@@ -267,26 +278,47 @@ struct draw : public PS
     float2 regionmin;
     float2 regionmax;
 
-    void fillzero()
+    void clear()
     {
         regionmin = {};
         regionmax = {};
-        std::memset(result, 0, sizeof(result));
         std::memset(buffer, 0, sizeof(buffer));
+        std::memset(result, 0, sizeof(result));
     }
 
-    void blit()
+    void mosaicflush()
     {
+        for (int x = regionmin.x; x < regionmax.x; x++)
+        {
+            for (int y = regionmin.y; y < regionmax.y; y++)
+            {
+                float4 dest = frgbcvt(result[x + y * pitch]);
+                float4 src = frgbcvt(buffer[x + y * pitch]);
 
+                float4 c = {};
+                c.x = dest.x * (1.0 - src.w) + src.x * src.w;
+                c.y = dest.y * (1.0 - src.w) + src.y * src.w;
+                c.z = dest.z * (1.0 - src.w) + src.z * src.w;
+                c.w = dest.w * (1.0 - src.w) + src.w;
+
+                result[x + y * pitch] = rgbfcvt(c);
+                buffer[x + y * pitch] = {};
+            }
+        }
+
+        regionmin = {};
+        regionmax = {};
     }
 
+    template<typename Ps>
     void rast(
         float2 v0,
         float2 v1,
         float2 v2,
         float2 uv0,
         float2 uv1,
-        float2 uv2)
+        float2 uv2,
+        Ps& ps)
     {
         float2 _max = max(max(v0, v1), v2);
         float2 _min = min(min(v0, v1), v2);
@@ -342,7 +374,7 @@ struct draw : public PS
                     const float2 lerpc = mul(barycetnric, vert - v0);
                     const float w = 1.0f - lerpc.x - lerpc.y;
                     const float2 uv = uv0 * float2(w) + uv1 * float2(lerpc.x) + uv2 * float2(lerpc.y);
-                    const float4 color = PS::pixel(vert, uv);
+                    const float4 color = ps.pixel(vert, uv);
                     const int2 rastcoord = clamp(int2(x, y), int2(0, 0), irastminusone);
                     const ptrdiff_t pose = rastcoord.x + pitch * rastcoord.y;
                     float balpha = buffer[pose].rgba[3] * unorm8_to_float + alpha;
@@ -364,7 +396,18 @@ struct PsBliter
     }
 };
 
-draw<PsBliter> t;
+struct PsBliterEnd
+{
+    RESOURCE_REGISTER texture;
+
+    inline float4 pixel(const float2& vert, const float2& uv)
+    {
+        return texture.Sample(uv);
+    }
+};
+
+draw t;
+
 int main()
 {
     
@@ -374,12 +417,15 @@ int main()
 
     auto ts = std::chrono::high_resolution_clock::now();
 
-    RESOURCE_REGISTER reg;
+    RESOURCE_REGISTER reg;    
     reg.assign(q, x * 4, { x, y });
 
-    t.texture = reg;
+    PsBliter blt;
+    blt.texture = reg;
+    PsBliterEnd bltend;
+    bltend.texture = reg;
 
-    t.fillzero();
+    t.clear();
 
    /* for (int i = 5; i >= 0; i--)
     {
@@ -396,25 +442,45 @@ int main()
     }
  */
 
-    for (int i = 0; i < 35; i++)
+    for (int i = 0; i < 4; i++)
     {
-        float2 offset = float2(i * 52, 0);
-        t.rast(
-            float2(25, 32) + offset,
-            float2(94, 20) + offset,
-            float2(25, 230) + offset,  float2(0, 0), float2(1, 0), float2(0, 1));
+        float2 offset = float2(i * 32, 0);
 
-        t.rast(
-            float2(25, 230) + offset,
-            float2(94, 20) + offset,
-            float2(94, 197) + offset,  float2(0, 1), float2(1, 0), float2(1, 1));
+        if (i == 3)
+        {
+            t.rast(
+                float2(25, 32) + offset,
+                float2(94, 20) + offset,
+                float2(25, 230) + offset, float2(0, 0), float2(1, 0), float2(0, 1), bltend);
+
+            t.rast(
+                float2(25, 230) + offset,
+                float2(94, 20) + offset,
+                float2(94, 197) + offset, float2(0, 1), float2(1, 0), float2(1, 1), bltend);
+
+        }
+        else
+        {
+            t.rast(
+                float2(25, 32) + offset,
+                float2(94, 20) + offset,
+                float2(25, 230) + offset, float2(0, 0), float2(1, 0), float2(0, 1), blt);
+
+            t.rast(
+                float2(25, 230) + offset,
+                float2(94, 20) + offset,
+                float2(94, 197) + offset, float2(0, 1), float2(1, 0), float2(1, 1), blt);
+
+        }
+        
+        t.mosaicflush();
     }
 
     auto te = std::chrono::high_resolution_clock::now();
 
     std::cout << std::chrono::duration_cast<std::chrono::microseconds>((te - ts)).count();
 
-    stbi_write_png("C:\\Users\\doubl\\source\\repos\\tinyraster\\libtrtr\\res.png", 1024, 1024, 4, t.buffer, 1024 * 4);
+    stbi_write_png("C:\\Users\\doubl\\source\\repos\\tinyraster\\libtrtr\\res.png", 1024, 1024, 4, t.result, 1024 * 4);
 
     return 0;
 }
