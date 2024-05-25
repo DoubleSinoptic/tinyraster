@@ -246,7 +246,8 @@ constexpr COLOR_UINT_R8G8B8A8 rgbfcvt(const float4& cvt)
     return result;
 }
 
-struct draw
+template<typename PS>
+struct draw : public PS
 {
     static constexpr bool edge(float xa, float ya,
         float xb, float yb,
@@ -259,24 +260,40 @@ struct draw
     static constexpr const uint32_t H = 1024;
     int2 irast = { pitch , H };
     int2 irastminusone = irast - int2(1, 1);
+
+    COLOR_UINT_R8G8B8A8 result[pitch * H];
     COLOR_UINT_R8G8B8A8 buffer[pitch * H];
+
+    float2 regionmin;
+    float2 regionmax;
 
     void fillzero()
     {
+        regionmin = {};
+        regionmax = {};
+        std::memset(result, 0, sizeof(result));
         std::memset(buffer, 0, sizeof(buffer));
+    }
+
+    void blit()
+    {
+
     }
 
     void rast(
         float2 v0,
         float2 v1,
         float2 v2,
-        RESOURCE_REGISTER reg,
         float2 uv0,
         float2 uv1,
         float2 uv2)
     {
         float2 _max = max(max(v0, v1), v2);
         float2 _min = min(min(v0, v1), v2);
+
+        regionmin = min(regionmin, _min);
+        regionmax = max(regionmax, _max);
+
         float2 dirA = v1 - v0;
         float2 dirB = v2 - v0;
         float2x2 barycetnric = inverse({
@@ -291,25 +308,27 @@ struct draw
                 float px = x + 0.5f;
                 float py = y + 0.5f;
 
+                const float kcoff = 0.35f;
+
                 bool insideA = 
-                       edge(v0.x, v0.y, v1.x, v1.y, px + 0.25f, py)
-                    && edge(v1.x, v1.y, v2.x, v2.y, px + 0.25f, py)
-                    && edge(v2.x, v2.y, v0.x, v0.y, px + 0.25f, py);
+                       edge(v0.x, v0.y, v1.x, v1.y, px + kcoff, py)
+                    && edge(v1.x, v1.y, v2.x, v2.y, px + kcoff, py)
+                    && edge(v2.x, v2.y, v0.x, v0.y, px + kcoff, py);
 
                 bool insideB =
-                    edge(v0.x, v0.y, v1.x, v1.y,    px - 0.25f, py)
-                    && edge(v1.x, v1.y, v2.x, v2.y, px - 0.25f, py)
-                    && edge(v2.x, v2.y, v0.x, v0.y, px - 0.25f, py);
+                    edge(v0.x, v0.y, v1.x, v1.y,    px - kcoff, py)
+                    && edge(v1.x, v1.y, v2.x, v2.y, px - kcoff, py)
+                    && edge(v2.x, v2.y, v0.x, v0.y, px - kcoff, py);
 
                 bool insideC =
-                    edge(v0.x, v0.y, v1.x, v1.y,    px, py + 0.25f)
-                    && edge(v1.x, v1.y, v2.x, v2.y, px, py + 0.25f)
-                    && edge(v2.x, v2.y, v0.x, v0.y, px, py + 0.25f);
+                    edge(v0.x, v0.y, v1.x, v1.y,    px, py + kcoff)
+                    && edge(v1.x, v1.y, v2.x, v2.y, px, py + kcoff)
+                    && edge(v2.x, v2.y, v0.x, v0.y, px, py + kcoff);
 
                 bool insideD =
-                    edge(v0.x, v0.y, v1.x, v1.y,    px, py - 0.25f)
-                    && edge(v1.x, v1.y, v2.x, v2.y, px, py - 0.25f)
-                    && edge(v2.x, v2.y, v0.x, v0.y, px, py - 0.25f);
+                    edge(v0.x, v0.y, v1.x, v1.y,    px, py - kcoff)
+                    && edge(v1.x, v1.y, v2.x, v2.y, px, py - kcoff)
+                    && edge(v2.x, v2.y, v0.x, v0.y, px, py - kcoff);
 
                 float alpha =  
                     (insideA ? 0.25f : 0.0f) +
@@ -319,10 +338,11 @@ struct draw
 
                 if (insideA || insideB || insideC || insideD)
                 {
-                    const float2 lerpc = mul(barycetnric, float2(px, py) - v0);
+                    const float2 vert = float2(px, py);
+                    const float2 lerpc = mul(barycetnric, vert - v0);
                     const float w = 1.0f - lerpc.x - lerpc.y;
                     const float2 uv = uv0 * float2(w) + uv1 * float2(lerpc.x) + uv2 * float2(lerpc.y);
-                    const float4 color = reg.Sample(uv);
+                    const float4 color = PS::pixel(vert, uv);
                     const int2 rastcoord = clamp(int2(x, y), int2(0, 0), irastminusone);
                     const ptrdiff_t pose = rastcoord.x + pitch * rastcoord.y;
                     float balpha = buffer[pose].rgba[3] * unorm8_to_float + alpha;
@@ -333,7 +353,18 @@ struct draw
     }
 };
 
-draw t;
+struct PsBliter
+{
+    RESOURCE_REGISTER texture;
+
+    inline float4 pixel(const float2& vert, const float2& uv)
+    {
+        float pf = powf(1.0f - uv.x, 0.4f);
+        return texture.Sample(uv) * float4(pf < 0.2 ? 0.2 : pf);
+    }
+};
+
+draw<PsBliter> t;
 int main()
 {
     
@@ -346,34 +377,44 @@ int main()
     RESOURCE_REGISTER reg;
     reg.assign(q, x * 4, { x, y });
 
+    t.texture = reg;
 
     t.fillzero();
 
-    t.rast(
-        float2(95, 95), 
-        float2(600, 15),
-        float2(15, 600), reg, float2(0, 0), float2(1, 0), float2(0, 1));
+   /* for (int i = 5; i >= 0; i--)
+    {
+        float2 offset = float2(i * 52, 0);
+        t.rast(
+            float2(95, 95) + offset,
+            float2(600, 15) + offset,
+            float2(15, 600) + offset, float2(0, 0), float2(1, 0), float2(0, 1));
 
-    t.rast(
-        float2(15, 600),
-        float2(600, 15),
-        float2(600, 600), reg, float2(0, 1), float2(1, 0), float2(1, 1));
+        t.rast(
+            float2(15, 600) + offset,
+            float2(600, 15) + offset,
+            float2(600, 600) + offset, float2(0, 1), float2(1, 0), float2(1, 1));
+    }
+ */
 
-   /* t.rast(
-        float2(0, 0),
-        float2(600, 0),
-        float2(0, 600), reg, float2(0, 0), float2(1, 0), float2(0, 1));
+    for (int i = 0; i < 35; i++)
+    {
+        float2 offset = float2(i * 52, 0);
+        t.rast(
+            float2(25, 32) + offset,
+            float2(94, 20) + offset,
+            float2(25, 230) + offset,  float2(0, 0), float2(1, 0), float2(0, 1));
 
-    t.rast(
-        float2(0, 600),
-        float2(600, 0),
-        float2(600, 600), reg, float2(0, 1), float2(1, 0), float2(1, 1));*/
+        t.rast(
+            float2(25, 230) + offset,
+            float2(94, 20) + offset,
+            float2(94, 197) + offset,  float2(0, 1), float2(1, 0), float2(1, 1));
+    }
 
     auto te = std::chrono::high_resolution_clock::now();
 
     std::cout << std::chrono::duration_cast<std::chrono::microseconds>((te - ts)).count();
 
-    stbi_write_png("C:\\Users\\doubl\\source\\repos\\libtrtr\\libtrtr\\res.png", 1024, 1024, 4, t.buffer, 1024 * 4);
+    stbi_write_png("C:\\Users\\doubl\\source\\repos\\tinyraster\\libtrtr\\res.png", 1024, 1024, 4, t.buffer, 1024 * 4);
 
     return 0;
 }
