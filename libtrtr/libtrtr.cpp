@@ -10,18 +10,18 @@
 #define STB_IMAGE_IMPLEMENTATION 1
 #include "stb_image.h"
 
-union COLOR_UINT_R8G8B8A8
+union PX_UNORM_R8G8B8A8
 {
     uint8_t rgba[4];
 
-    constexpr COLOR_UINT_R8G8B8A8() : rgba{ 0, 0, 0, 0 }
+    constexpr PX_UNORM_R8G8B8A8() : rgba{ 0, 0, 0, 0 }
     {};
 
-    constexpr COLOR_UINT_R8G8B8A8(uint8_t r, uint8_t g, uint8_t b, uint8_t a) :
+    constexpr PX_UNORM_R8G8B8A8(uint8_t r, uint8_t g, uint8_t b, uint8_t a) :
         rgba{ r, g, b, a }
     {}
 
-    constexpr COLOR_UINT_R8G8B8A8(int r, int g, int b, int a) :
+    constexpr PX_UNORM_R8G8B8A8(int r, int g, int b, int a) :
         rgba{ (uint8_t)r,  (uint8_t)g,  (uint8_t)b, (uint8_t)a }
     {}
 };
@@ -178,10 +178,10 @@ constexpr float4 lerp(const float4& a, const float4& b, const float4& c)
 static constexpr const float unorm8_to_float = 1.0f / 255.0f;
 static constexpr const float float_to_unorm8 = 255.0f;
 
-constexpr COLOR_UINT_R8G8B8A8 rgbfcvt(const float4& cvt)
+constexpr PX_UNORM_R8G8B8A8 rgbfcvt(const float4& cvt)
 {
     float4 rq = cvt * float_to_unorm8;
-    COLOR_UINT_R8G8B8A8 result = {};
+    PX_UNORM_R8G8B8A8 result = {};
     result.rgba[0] = rq.x;
     result.rgba[1] = rq.y;
     result.rgba[2] = rq.z;
@@ -189,7 +189,7 @@ constexpr COLOR_UINT_R8G8B8A8 rgbfcvt(const float4& cvt)
     return result;
 }
 
-constexpr float4 frgbcvt(COLOR_UINT_R8G8B8A8 color)
+constexpr float4 frgbcvt(PX_UNORM_R8G8B8A8 color)
 {
     return {
         unorm8_to_float * color.rgba[0],
@@ -222,7 +222,7 @@ struct RESOURCE_REGISTER
     inline float4 Load(const int2& c) const
     {
         const int2 index = clamp(c, int2(0, 0), iresminusone);
-        const COLOR_UINT_R8G8B8A8* pixeldata = (const COLOR_UINT_R8G8B8A8*)memory;
+        const PX_UNORM_R8G8B8A8* pixeldata = (const PX_UNORM_R8G8B8A8*)memory;
         const auto color = pixeldata[index.x + index.y * pitch];
         return {
            unorm8_to_float* color.rgba[0],
@@ -272,8 +272,8 @@ struct draw
     int2 irast = { pitch , H };
     int2 irastminusone = irast - int2(1, 1);
 
-    COLOR_UINT_R8G8B8A8 result[pitch * H];
-    COLOR_UINT_R8G8B8A8 buffer[pitch * H];
+    PX_UNORM_R8G8B8A8 result[pitch * H];
+    PX_UNORM_R8G8B8A8 buffer[pitch * H];
 
     float2 regionmin;
     float2 regionmax;
@@ -288,8 +288,8 @@ struct draw
 
     void mosaicflush()
     {
-        COLOR_UINT_R8G8B8A8* __restrict _buffer = buffer;
-        COLOR_UINT_R8G8B8A8* __restrict _result = result;
+        PX_UNORM_R8G8B8A8* __restrict _buffer = buffer;
+        PX_UNORM_R8G8B8A8* __restrict _result = result;
         for (int y = regionmin.y; y < regionmax.y; y++)
         {
             for (int x = regionmin.x; x < regionmax.x; x++)
