@@ -288,12 +288,14 @@ struct draw
 
     void mosaicflush()
     {
-        for (int x = regionmin.x; x < regionmax.x; x++)
+        COLOR_UINT_R8G8B8A8* __restrict _buffer = buffer;
+        COLOR_UINT_R8G8B8A8* __restrict _result = result;
+        for (int y = regionmin.y; y < regionmax.y; y++)
         {
-            for (int y = regionmin.y; y < regionmax.y; y++)
+            for (int x = regionmin.x; x < regionmax.x; x++)
             {
-                float4 dest = frgbcvt(result[x + y * pitch]);
-                float4 src = frgbcvt(buffer[x + y * pitch]);
+                float4 dest = frgbcvt(_result[x + y * pitch]);
+                float4 src = frgbcvt(_buffer[x + y * pitch]);
 
                 float4 c = {};
                 c.x = dest.x * (1.0 - src.w) + src.x * src.w;
@@ -301,8 +303,8 @@ struct draw
                 c.z = dest.z * (1.0 - src.w) + src.z * src.w;
                 c.w = dest.w * (1.0 - src.w) + src.w;
 
-                result[x + y * pitch] = rgbfcvt(c);
-                buffer[x + y * pitch] = {};
+                _result[x + y * pitch] = rgbfcvt(c);
+                _buffer[x + y * pitch] = {};
             }
         }
 
@@ -320,22 +322,22 @@ struct draw
         float2 uv2,
         Ps& ps)
     {
-        float2 _max = max(max(v0, v1), v2);
-        float2 _min = min(min(v0, v1), v2);
+        const float2 _max = max(max(v0, v1), v2);
+        const float2 _min = min(min(v0, v1), v2);
 
         regionmin = min(regionmin, _min);
         regionmax = max(regionmax, _max);
 
-        float2 dirA = v1 - v0;
-        float2 dirB = v2 - v0;
-        float2x2 barycetnric = inverse({
+        const float2 dirA = v1 - v0;
+        const float2 dirB = v2 - v0;
+        const float2x2 barycetnric = inverse({
             dirA.x, dirB.x,
             dirA.y, dirB.y
         });
 
-        for (int x = _min.x; x < _max.x; x++)
+        for (int y = _min.y; y < _max.y; y++)
         {
-            for (int y = _min.y; y < _max.y; y++)
+            for (int x = _min.x; x < _max.x; x++)
             {
                 float px = x + 0.5f;
                 float py = y + 0.5f;
