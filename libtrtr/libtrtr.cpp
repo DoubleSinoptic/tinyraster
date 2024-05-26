@@ -260,15 +260,9 @@ float2x2 inverse(const float2x2& mat)
 
 struct draw 
 {
-    static constexpr bool edge(float xa, float ya,
-        float xb, float yb,
-        float xp, float yp)
-    {
-        return ((yp - ya) * (xb - xa) - (xp - xa) * (yb - ya)) >= 0.0f;
-    }
-
+   
     int2 irast;
-    int2 irastminusone = irast - int2(1, 1);
+    int2 irastminusone;
     int16_t pixelpitch;
     PX_UNORM_R8G8B8A8* result;
     PX_UNORM_R8G8B8A8* buffer;
@@ -325,14 +319,21 @@ struct draw
         regionmax = {};
     }
 
+    static constexpr bool edge(float xa, float ya,
+        float xb, float yb,
+        float xp, float yp)
+    {
+        return ((yp - ya) * (xb - xa) - (xp - xa) * (yb - ya)) >= 0.0f;
+    }
+
     template<typename Ps>
     void rast(
-        float2 v0,
-        float2 v1,
-        float2 v2,
-        float2 uv0,
-        float2 uv1,
-        float2 uv2,
+        const float2& v0,
+        const float2& v1,
+        const float2& v2,
+        const float2& uv0,
+        const float2& uv1,
+        const float2& uv2,
         Ps& ps)
     {
         const float2 _max = max(max(v0, v1), v2);
@@ -421,8 +422,8 @@ struct PsBliterEnd
     }
 };
 
-PX_UNORM_R8G8B8A8 buffers[1024 * 1024];
-PX_UNORM_R8G8B8A8 result[1024 * 1024];
+PX_UNORM_R8G8B8A8 buffers[256 * 256];
+PX_UNORM_R8G8B8A8 result[256 * 256];
 
 int main()
 {
@@ -435,7 +436,7 @@ int main()
 
 
     draw t;
-    t.assign(result, buffers, {1024, 1024}, 1024);
+    t.assign(result, buffers, { 256, 256 }, 256);
 
     RESOURCE_REGISTER reg;    
     reg.assign(q, x, { x, y });
@@ -500,7 +501,7 @@ int main()
 
     std::cout << std::chrono::duration_cast<std::chrono::microseconds>((te - ts)).count();
 
-    stbi_write_png("C:\\Users\\doubl\\source\\repos\\tinyraster\\libtrtr\\res.png", 1024, 1024, 4, t.result, 1024 * 4);
+    stbi_write_png("C:\\Users\\doubl\\source\\repos\\tinyraster\\libtrtr\\res.png", 256, 256, 4, t.result, 256 * 4);
 
     return 0;
 }
