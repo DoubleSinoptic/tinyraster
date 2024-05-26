@@ -202,7 +202,7 @@ constexpr float4 frgbcvt(PX_UNORM_R8G8B8A8 color)
 struct RESOURCE_REGISTER
 {
     void*   memory;
-    int16_t pitch;
+    int16_t pixelpitch;
     int2    ires;
     int2    iresminusone;
     float2  fres;
@@ -211,7 +211,7 @@ struct RESOURCE_REGISTER
     void assign(void* addr, int16_t p, int2 r)
     {
         assert(p % 4 == 0);
-        pitch = p / 4;
+        pixelpitch = p;
         memory = addr;
         ires = r;
         iresminusone = r - int2(1, 1);
@@ -223,7 +223,7 @@ struct RESOURCE_REGISTER
     {
         const int2 index = clamp(c, int2(0, 0), iresminusone);
         const PX_UNORM_R8G8B8A8* pixeldata = (const PX_UNORM_R8G8B8A8*)memory;
-        const auto color = pixeldata[index.x + index.y * pitch];
+        const auto color = pixeldata[index.x + index.y * pixelpitch];
         return {
            unorm8_to_float* color.rgba[0],
            unorm8_to_float* color.rgba[1],
@@ -267,23 +267,36 @@ struct draw
         return ((yp - ya) * (xb - xa) - (xp - xa) * (yb - ya)) >= 0.0f;
     }
 
-    static constexpr const uint32_t pitch = 1024;
-    static constexpr const uint32_t H = 1024;
-    int2 irast = { pitch , H };
+    int2 irast;
     int2 irastminusone = irast - int2(1, 1);
-
-    PX_UNORM_R8G8B8A8 result[pitch * H];
-    PX_UNORM_R8G8B8A8 buffer[pitch * H];
+    int16_t pixelpitch;
+    PX_UNORM_R8G8B8A8* result;
+    PX_UNORM_R8G8B8A8* buffer;
 
     float2 regionmin;
     float2 regionmax;
 
-    void clear()
+    void assign(PX_UNORM_R8G8B8A8* _target, PX_UNORM_R8G8B8A8* _buffer, int2 res, int16_t pixpitch)
     {
+        pixelpitch = pixpitch;
         regionmin = {};
         regionmax = {};
-        std::memset(buffer, 0, sizeof(buffer));
-        std::memset(result, 0, sizeof(result));
+        result = _target;
+        buffer = _buffer;
+        irast = res;
+        irastminusone = res - int2(1, 1);
+    }
+
+
+    void clear()
+    {
+        size_t setsize = irast.x * sizeof(PX_UNORM_R8G8B8A8); 
+        regionmin = {};
+        regionmax = {};
+        for (int i = 0; i < irast.y; i++)
+            std::memset(buffer + pixelpitch * i, 0, setsize);
+        for (int i = 0; i < irast.y; i++)
+            std::memset(result + pixelpitch * i, 0, setsize);
     }
 
     void mosaicflush()
@@ -294,8 +307,8 @@ struct draw
         {
             for (int x = regionmin.x; x < regionmax.x; x++)
             {
-                float4 dest = frgbcvt(_result[x + y * pitch]);
-                float4 src = frgbcvt(_buffer[x + y * pitch]);
+                float4 dest = frgbcvt(_result[x + y * pixelpitch]);
+                float4 src = frgbcvt(_buffer[x + y * pixelpitch]);
 
                 float4 c = {};
                 c.x = dest.x * (1.0 - src.w) + src.x * src.w;
@@ -303,8 +316,8 @@ struct draw
                 c.z = dest.z * (1.0 - src.w) + src.z * src.w;
                 c.w = dest.w * (1.0 - src.w) + src.w;
 
-                _result[x + y * pitch] = rgbfcvt(c);
-                _buffer[x + y * pitch] = {};
+                _result[x + y * pixelpitch] = rgbfcvt(c);
+                _buffer[x + y * pixelpitch] = {};
             }
         }
 
@@ -378,7 +391,7 @@ struct draw
                     const float2 uv = uv0 * float2(w) + uv1 * float2(lerpc.x) + uv2 * float2(lerpc.y);
                     const float4 color = ps.pixel(vert, uv);
                     const int2 rastcoord = clamp(int2(x, y), int2(0, 0), irastminusone);
-                    const ptrdiff_t pose = rastcoord.x + pitch * rastcoord.y;
+                    const ptrdiff_t pose = rastcoord.x + pixelpitch * rastcoord.y;
                     float balpha = buffer[pose].rgba[3] * unorm8_to_float + alpha;
                     buffer[pose] = rgbfcvt({ color.x, color.y, color.z, balpha > 1.0f ? 1.0f : balpha});
                 }
@@ -408,7 +421,8 @@ struct PsBliterEnd
     }
 };
 
-draw t;
+PX_UNORM_R8G8B8A8 buffers[1024 * 1024];
+PX_UNORM_R8G8B8A8 result[1024 * 1024];
 
 int main()
 {
@@ -419,8 +433,12 @@ int main()
 
     auto ts = std::chrono::high_resolution_clock::now();
 
+
+    draw t;
+    t.assign(result, buffers, {1024, 1024}, 1024);
+
     RESOURCE_REGISTER reg;    
-    reg.assign(q, x * 4, { x, y });
+    reg.assign(q, x, { x, y });
 
     PsBliter blt;
     blt.texture = reg;
